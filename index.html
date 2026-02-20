@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Universal Browser Detector</title>
+    <style>
+        body { font-family: 'Courier New', Courier, monospace; background: #008080; color: white; display: flex; justify-content: center; padding-top: 50px; }
+        .win95-card { background: #c0c0c0; border: 2px solid; border-color: #fff #808080 #808080 #fff; padding: 20px; color: black; width: 90%; max-width: 500px; box-shadow: 2px 2px 0 black; }
+        .title-bar { background: #000080; color: white; padding: 3px 10px; font-weight: bold; margin: -20px -20px 20px -20px; display: flex; justify-content: space-between; }
+        .result { font-size: 1.5rem; font-weight: bold; color: #000080; border: 2px inset #fff; background: white; padding: 10px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="win95-card">
+        <div class="title-bar"><span>Browser_Identity.exe</span><span>[X]</span></div>
+        <label>Detected Browser Engine/Name:</label>
+        <div id="display" class="result">Detecting...</div>
+        <p><small id="raw-ua" style="word-break: break-all; opacity: 0.7;"></small></p>
+    </div>
+
+    <script>
+        async function detectEverything() {
+            const ua = navigator.userAgent;
+
+            // 1. BRAVE (Modern Privacy)
+            if (navigator.brave && await navigator.brave.isBrave()) return "Brave Browser";
+
+            // 2. MODERN / MID-ERA
+            if (ua.indexOf("SamsungBrowser") > -1) return "Samsung Internet";
+            if (ua.indexOf("DuckDuckGo") > -1) return "DuckDuckGo Browser";
+            if (ua.indexOf("YaBrowser") > -1) return "Yandex Browser";
+            if (ua.indexOf("Vivaldi") > -1) return "Vivaldi";
+            if (ua.indexOf("Edg/") > -1) return "Microsoft Edge";
+            if (ua.indexOf("OPR/") > -1 || ua.indexOf("Opera/") > -1) return "Opera";
+            
+            // 3. THE 90s & EARLY 2000s CLASSICS
+            if (ua.indexOf("MSIE") > -1 || ua.indexOf("Trident/") > -1) {
+                // Extracts "MSIE 6.0" or "MSIE 3.0b"
+                const ieMatch = ua.match(/MSIE\s([\d\.]+)/);
+                return ieMatch ? "Internet Explorer " + ieMatch[1] : "Internet Explorer";
+            }
+            if (ua.indexOf("Netscape") > -1) return "Netscape Navigator";
+            if (ua.indexOf("Mosaic") > -1) return "NCSA Mosaic";
+            if (ua.indexOf("Lynx") > -1) return "Lynx (Text Browser)";
+            if (ua.indexOf("Konqueror") > -1) return "Konqueror";
+            
+            // 4. THE CORE ENGINES (Checked last because others spoof these)
+            if (ua.indexOf("Firefox/") > -1) return "Mozilla Firefox";
+            if (ua.indexOf("Chrome/") > -1) return "Google Chrome";
+            if (ua.indexOf("Safari/") > -1 && ua.indexOf("Chrome/") === -1) return "Apple Safari";
+            
+            // 5. THE 1990s "MOZILLA" FALLBACK
+            // Early Netscape reported as "Mozilla/1.0", "Mozilla/2.02", etc.
+            if (ua.startsWith("Mozilla/") && ua.indexOf("compatible") === -1 && ua.indexOf("Chrome") === -1 && ua.indexOf("Safari") === -1) {
+                return "Netscape (Classic) " + ua.split('/')[1].split(' ')[0];
+            }
+
+            // 6. FINAL FALLBACK: Give the specific browser token
+            const parts = ua.split(' ');
+            return parts[parts.length - 1];
+        }
+
+        detectEverything().then(name => {
+            document.getElementById('display').innerText = name;
+            document.getElementById('raw-ua').innerText = navigator.userAgent;
+        });
+    </script>
+</body>
+</html>
