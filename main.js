@@ -24,23 +24,28 @@ audio.music.loop = true; audio.music.volume = .18; audio.shot.volume = .55; audi
 audio.music.preload = 'auto';
 let audioStarted = false, muted = false, ctx;
 
-// --- try to start music on page load ---
 function tryStartMusic(){
   if (audioStarted) return;
   const p = audio.music.play();
   if (p && p.then) {
-    p.then(()=>{ audioStarted = true; }).catch(()=>{ /* blocked — wait for gesture */ });
+    p.then(()=>{ audioStarted = true; }).catch(()=>{});
   } else {
     audioStarted = true;
   }
 }
-tryStartMusic();
-// fallback: if the browser blocked autoplay, the first user gesture starts it
-['pointerdown','keydown','touchstart'].forEach(evt=>{
+// play on load once buffered
+if (audio.music.readyState >= 3) {
+  tryStartMusic();
+} else {
+  audio.music.addEventListener('canplaythrough', tryStartMusic, { once:true });
+  audio.music.addEventListener('loadeddata', tryStartMusic, { once:true });
+}
+// retry on any gesture until it actually starts
+['pointerdown','keydown','touchstart','click'].forEach(evt=>{
   window.addEventListener(evt, ()=>{
     if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
     tryStartMusic();
-  }, { once:true });
+  });
 });
 
 function unlockAudio(){
@@ -72,7 +77,8 @@ world.innerHTML = `
 let level=0, bulletsLeft=3, state='play', mouse={x:900,y:500}, bullet=null;
 let enemies=[], explosives=[], towers=[], platforms=[], effects=[];
 const hero={x:210,y:836};
-let heroNode, aimPath, muzzleFlash, pendingShot=false;
+let heroNode, aimPath, muzzleFlash;
+let pointerHeld = false;
 
 function heroMarkup(){return `<g filter="url(#shadow)">
   <ellipse cx="0" cy="72" rx="64" ry="15" fill="#251e2c" opacity=".35"/>
@@ -116,7 +122,6 @@ function newLevel(){
  levelLabel.textContent=`Wanted ${String(level).padStart(2,'0')}`; hint.textContent='Move your mouse to aim • Click to fire';
  const count=1+Math.floor(Math.random()*4); const slots=shuffled([740,990,1250,1510,1700]).slice(0,count).sort((a,b)=>a-b);
  slots.forEach((x,i)=>enemies.push(makeEnemy(x,i)));
- // A tower always has a bandit standing in its guaranteed right-side fall zone.
  if(count>=2 && Math.random()<.72){const target=enemies[enemies.length-1];const tx=target.x-175;towers.push(makeTower(tx));}
  const propCandidates=slots.map(x=>x-100).filter(x=>!towers.some(t=>Math.abs(t.x-x)<100));
  if(propCandidates.length) explosives.push(makeExplosive(propCandidates[0],Math.random()<.58?'tnt':'barrel'));
@@ -129,32 +134,29 @@ function newLevel(){
 
 function svgPoint(e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const q=p.matrixTransform(svg.getScreenCTM().inverse());return{x:q.x,y:q.y};}
 
-// --- input: aim while moving / holding; fire only on release ---
-svg.addEventListener('pointermove',e=>{mouse=svgPoint(e);updateAim();});
+/* INPUT: mouse / touch only. Fire on RELEASE (pointerup). No keyboard. */
+svg.addEventListener('pointermove',e=>{ mouse=svgPoint(e); updateAim(); });
 svg.addEventListener('pointerdown',e=>{
-  if(e.button!==0)return;
+  if(e.button!==0) return;
+  e.preventDefault();
   unlockAudio();
-  mouse=svgPoint(e);
+  pointerHeld = true;
+  mouse = svgPoint(e);
   updateAim();
-  pendingShot = (state==='play');
 });
 svg.addEventListener('pointerup',e=>{
-  if(e.button!==0)return;
-  if(!pendingShot)return;
-  pendingShot=false;
-  if(state!=='play')return;
+  if(e.button!==0) return;
+  if(!pointerHeld) return;
+  pointerHeld = false;
+  if(state!=='play') return;
   unlockAudio();
-  mouse=svgPoint(e);
+  mouse = svgPoint(e);
   updateAim();
   shoot();
 });
-svg.addEventListener('pointerleave',()=>{ pendingShot=false; });
-window.addEventListener('blur',()=>{ pendingShot=false; });
-
-window.addEventListener('keydown',e=>{
-  unlockAudio();
-  if(e.key===' '&&state==='play'){e.preventDefault();shoot();}
-});
+svg.addEventListener('pointercancel',()=>{ pointerHeld=false; });
+svg.addEventListener('pointerleave',()=>{ pointerHeld=false; });
+window.addEventListener('blur',()=>{ pointerHeld=false; });
 
 function aimVector(){let dx=mouse.x-(hero.x+170),dy=mouse.y-(hero.y-35),m=Math.hypot(dx,dy)||1;return{x:dx/m,y:dy/m};}
 function updateAim(){
@@ -180,71 +182,53 @@ function killEnemy(en,reason){
  setTimeout(endCheck,80);
 }
 
-/* === EXPLOSION LOGIC =========================================
-   TNT    -> direct blast: kills nearby enemies in a large radius,
-             chain-reacts with nearby TNT, and can topple towers.
-   Barrel -> does NOT explode. It stays where it is, puffs a burst
-             of smoke/sparks, and sets off nearby TNT only.
-   ============================================================ */
-const BLAST_RADIUS   = 340;   // TNT lethal radius (was 230)
-const TOWER_RADIUS   = 260;   // TNT tower-topple radius (was 210)
-const CHAIN_RADIUS   = 340;   // TNT trigger radius for other TNT
+const BLAST_RADIUS   = 340;
+const TOWER_RADIUS   = 260;
+const CHAIN_RADIUS   = 340;
 
 function explode(ex){
  if(!ex.alive)return;
  if(ex.type==='tnt'){
    ex.alive=false;ex.node.remove();play('boom');
-   // bigger visual: large ring + more/wider sparks
    burst(ex.x,ex.y,'#ff9e28',42,true,1.7);
    enemies.forEach(e=>{if(e.alive&&Math.hypot(e.x-ex.x,e.y-ex.y)<BLAST_RADIUS)killEnemy(e,'blast')});
    towers.forEach(t=>{if(!t.falling&&!t.fallen&&Math.abs(t.x-ex.x)<TOWER_RADIUS)fallTower(t,1)});
-   // chain to nearby TNT only (barrels just get triggered, they don't detonate)
    explosives.forEach(other=>{
      if(other.alive&&other!==ex&&other.type==='tnt'&&Math.hypot(other.x-ex.x,other.y-ex.y)<CHAIN_RADIUS)
        setTimeout(()=>explode(other),120);
    });
  } else {
-   // Barrel: never explodes. It stays on the field and only triggers TNT.
    triggerBarrel(ex);
  }
 }
-
 function triggerBarrel(ex){
- // puffy burst of smoke + sparks as the barrel "goes off" without exploding
+ if(ex.spent) return;
  burst(ex.x,ex.y-20,'#ffc357',22,false,1.2);
  ping(260,.18,'triangle');
  hint.textContent='BARREL RUPTURED!';
- // set off any TNT within radius
  explosives.forEach(other=>{
    if(other.alive&&other!==ex&&other.type==='tnt'&&Math.hypot(other.x-ex.x,other.y-ex.y)<CHAIN_RADIUS)
      setTimeout(()=>explode(other),120);
  });
- // barrel remains in the world; mark it as spent so it can't trigger again
  ex.spent = true;
  ex.node.style.opacity = '.55';
 }
-
 function fallTower(t,dir){if(t.falling||t.fallen)return;t.falling=true;t.dir=dir>=0?1:-1;hint.textContent='TIMBER!';ping(145,.22,'sawtooth');}
-
-// burst(x, y, color, count, big, scale)
 function burst(x,y,color,count,big=false,scale=1){
  const ringR = big ? 18*scale : 12*scale;
  const ringW = (big ? 34 : 16) * scale;
  const ring=el('circle',{cx:x,cy:y,r:ringR,fill:'none',stroke:color,'stroke-width':ringW,opacity:1});
  fxLayer.append(ring);
  effects.push({type:'ring',node:ring,x,y,r:ringR,life:0,big,scale});
-
- const sparkN = count;
  const baseSpeed = (big?260:150) * scale;
  const baseR     = (big?10:6) * scale;
- for(let i=0;i<sparkN;i++){
+ for(let i=0;i<count;i++){
    const a=Math.random()*Math.PI*2, s=baseSpeed*(0.4+Math.random());
    const n=el('circle',{cx:x,cy:y,r:4+Math.random()*baseR,fill:i%3?color:'#fff0a1'});
    fxLayer.append(n);
    effects.push({type:'spark',node:n,x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-80,life:0});
  }
 }
-
 function endCheck(){
  if(state!=='play'||bullet)return;
  if(enemies.every(e=>!e.alive)){setTimeout(()=>finish(true),500);return;}
