@@ -133,6 +133,7 @@ function bounceSound(){ping(1250,.055,'square');}
 function killEnemy(en,reason){
  if(!en.alive)return;en.alive=false;en.dy=-260;en.spin=(Math.random()>.5?1:-1)*360;en.node.style.opacity='.85';burst(en.x,en.y-30,reason==='crush'?'#ddc08a':'#ef5542',10);ping(reason==='crush'?100:320,.16,'sawtooth');
  hint.textContent=reason==='crush'?'SQUISHED! +250':'BANDIT DOWN! +100';
+ setTimeout(endCheck,80);
 }
 function explode(ex){
  if(!ex.alive)return;ex.alive=false;ex.node.remove();play('boom');burst(ex.x,ex.y,'#ff9e28',24,true);
@@ -150,11 +151,6 @@ function endCheck(){
  if(enemies.every(e=>!e.alive)){setTimeout(()=>finish(true),500);return;}
  if(towers.some(t=>t.falling)){setTimeout(endCheck,180);return;}
  if(bulletsLeft===0)setTimeout(()=>finish(false),450);
-}
-function killEnemy(en,reason){
- if(!en.alive)return;en.alive=false;en.dy=-260;en.spin=(Math.random()>.5?1:-1)*360;en.node.style.opacity='.85';burst(en.x,en.y-30,reason==='crush'?'#ddc08a':'#ef5542',10);ping(reason==='crush'?100:320,.16,'sawtooth');
- hint.textContent=reason==='crush'?'SQUISHED! +250':'BANDIT DOWN! +100';
- setTimeout(endCheck,80);
 }
 function finish(win){
  if(state!=='play')return;state=win?'win':'lose';aimPath?.setAttribute('opacity','0');overlay.classList.add('show');
