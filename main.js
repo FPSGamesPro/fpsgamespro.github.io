@@ -21,11 +21,31 @@ const audio = {
   boom: new Audio('assets/audio/tnt-chain-blast.mp3')
 };
 audio.music.loop = true; audio.music.volume = .18; audio.shot.volume = .55; audio.boom.volume = .65;
+audio.music.preload = 'auto';
 let audioStarted = false, muted = false, ctx;
+
+// --- try to start music on page load ---
+function tryStartMusic(){
+  if (audioStarted) return;
+  const p = audio.music.play();
+  if (p && p.then) {
+    p.then(()=>{ audioStarted = true; }).catch(()=>{ /* blocked — wait for gesture */ });
+  } else {
+    audioStarted = true;
+  }
+}
+tryStartMusic();
+// fallback: if the browser blocked autoplay, the first user gesture starts it
+['pointerdown','keydown','touchstart'].forEach(evt=>{
+  window.addEventListener(evt, ()=>{
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    tryStartMusic();
+  }, { once:true });
+});
+
 function unlockAudio(){
-  if (audioStarted) return; audioStarted = true;
-  audio.music.play().catch(()=>{});
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  tryStartMusic();
 }
 function play(name){ if(muted) return; const s=audio[name].cloneNode(); s.volume=audio[name].volume; s.play().catch(()=>{}); }
 function ping(freq=900, dur=.08, type='square'){
@@ -52,7 +72,7 @@ world.innerHTML = `
 let level=0, bulletsLeft=3, state='play', mouse={x:900,y:500}, bullet=null;
 let enemies=[], explosives=[], towers=[], platforms=[], effects=[];
 const hero={x:210,y:836};
-let heroNode, aimPath, muzzleFlash;
+let heroNode, aimPath, muzzleFlash, pendingShot=false;
 
 function heroMarkup(){return `<g filter="url(#shadow)">
   <ellipse cx="0" cy="72" rx="64" ry="15" fill="#251e2c" opacity=".35"/>
@@ -108,9 +128,33 @@ function newLevel(){
 }
 
 function svgPoint(e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const q=p.matrixTransform(svg.getScreenCTM().inverse());return{x:q.x,y:q.y};}
+
+// --- input: aim while moving / holding; fire only on release ---
 svg.addEventListener('pointermove',e=>{mouse=svgPoint(e);updateAim();});
-svg.addEventListener('pointerdown',e=>{if(e.button!==0||state!=='play')return;unlockAudio();mouse=svgPoint(e);shoot();});
-window.addEventListener('keydown',e=>{unlockAudio();if(e.key===' '&&state==='play'){e.preventDefault();shoot();}if(e.key.toLowerCase()==='r')newLevel();});
+svg.addEventListener('pointerdown',e=>{
+  if(e.button!==0)return;
+  unlockAudio();
+  mouse=svgPoint(e);
+  updateAim();
+  pendingShot = (state==='play');
+});
+svg.addEventListener('pointerup',e=>{
+  if(e.button!==0)return;
+  if(!pendingShot)return;
+  pendingShot=false;
+  if(state!=='play')return;
+  unlockAudio();
+  mouse=svgPoint(e);
+  updateAim();
+  shoot();
+});
+svg.addEventListener('pointerleave',()=>{ pendingShot=false; });
+window.addEventListener('blur',()=>{ pendingShot=false; });
+
+window.addEventListener('keydown',e=>{
+  unlockAudio();
+  if(e.key===' '&&state==='play'){e.preventDefault();shoot();}
+});
 
 function aimVector(){let dx=mouse.x-(hero.x+170),dy=mouse.y-(hero.y-35),m=Math.hypot(dx,dy)||1;return{x:dx/m,y:dy/m};}
 function updateAim(){
@@ -132,20 +176,75 @@ function shoot(){
 function bounceSound(){ping(1250,.055,'square');}
 function killEnemy(en,reason){
  if(!en.alive)return;en.alive=false;en.dy=-260;en.spin=(Math.random()>.5?1:-1)*360;en.node.style.opacity='.85';burst(en.x,en.y-30,reason==='crush'?'#ddc08a':'#ef5542',10);ping(reason==='crush'?100:320,.16,'sawtooth');
- hint.textContent=reason==='crush'?'SQUISHED! +250':'BANDIT DOWN! +100';
+ hint.textContent=reason==='crush'?'SQUISHED! +250':reason==='frag'?'SHRAPNEL! +150':'BANDIT DOWN! +100';
  setTimeout(endCheck,80);
 }
+
+/* === EXPLOSION LOGIC =========================================
+   TNT    -> direct blast: kills nearby enemies in a large radius,
+             chain-reacts with nearby TNT, and can topple towers.
+   Barrel -> does NOT explode. It stays where it is, puffs a burst
+             of smoke/sparks, and sets off nearby TNT only.
+   ============================================================ */
+const BLAST_RADIUS   = 340;   // TNT lethal radius (was 230)
+const TOWER_RADIUS   = 260;   // TNT tower-topple radius (was 210)
+const CHAIN_RADIUS   = 340;   // TNT trigger radius for other TNT
+
 function explode(ex){
- if(!ex.alive)return;ex.alive=false;ex.node.remove();play('boom');burst(ex.x,ex.y,'#ff9e28',24,true);
- enemies.forEach(e=>{if(e.alive&&Math.hypot(e.x-ex.x,e.y-ex.y)<230)killEnemy(e,'blast')});
- explosives.forEach(other=>{if(other.alive&&other!==ex&&Math.abs(other.x-ex.x)<270)setTimeout(()=>explode(other),120)});
- towers.forEach(t=>{if(!t.falling&&!t.fallen&&Math.abs(t.x-ex.x)<210)fallTower(t,1)});
+ if(!ex.alive)return;
+ if(ex.type==='tnt'){
+   ex.alive=false;ex.node.remove();play('boom');
+   // bigger visual: large ring + more/wider sparks
+   burst(ex.x,ex.y,'#ff9e28',42,true,1.7);
+   enemies.forEach(e=>{if(e.alive&&Math.hypot(e.x-ex.x,e.y-ex.y)<BLAST_RADIUS)killEnemy(e,'blast')});
+   towers.forEach(t=>{if(!t.falling&&!t.fallen&&Math.abs(t.x-ex.x)<TOWER_RADIUS)fallTower(t,1)});
+   // chain to nearby TNT only (barrels just get triggered, they don't detonate)
+   explosives.forEach(other=>{
+     if(other.alive&&other!==ex&&other.type==='tnt'&&Math.hypot(other.x-ex.x,other.y-ex.y)<CHAIN_RADIUS)
+       setTimeout(()=>explode(other),120);
+   });
+ } else {
+   // Barrel: never explodes. It stays on the field and only triggers TNT.
+   triggerBarrel(ex);
+ }
 }
+
+function triggerBarrel(ex){
+ // puffy burst of smoke + sparks as the barrel "goes off" without exploding
+ burst(ex.x,ex.y-20,'#ffc357',22,false,1.2);
+ ping(260,.18,'triangle');
+ hint.textContent='BARREL RUPTURED!';
+ // set off any TNT within radius
+ explosives.forEach(other=>{
+   if(other.alive&&other!==ex&&other.type==='tnt'&&Math.hypot(other.x-ex.x,other.y-ex.y)<CHAIN_RADIUS)
+     setTimeout(()=>explode(other),120);
+ });
+ // barrel remains in the world; mark it as spent so it can't trigger again
+ ex.spent = true;
+ ex.node.style.opacity = '.55';
+}
+
 function fallTower(t,dir){if(t.falling||t.fallen)return;t.falling=true;t.dir=dir>=0?1:-1;hint.textContent='TIMBER!';ping(145,.22,'sawtooth');}
-function burst(x,y,color,count,big=false){
- const ring=el('circle',{cx:x,cy:y,r:10,fill:'none',stroke:color,'stroke-width':big?28:14,opacity:1});fxLayer.append(ring);effects.push({type:'ring',node:ring,x,y,r:10,life:0,big});
- for(let i=0;i<count;i++){const a=Math.random()*Math.PI*2,s=(big?220:130)*(0.4+Math.random());const n=el('circle',{cx:x,cy:y,r:4+Math.random()*(big?12:6),fill:i%3?color:'#fff0a1'});fxLayer.append(n);effects.push({type:'spark',node:n,x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-80,life:0});}
+
+// burst(x, y, color, count, big, scale)
+function burst(x,y,color,count,big=false,scale=1){
+ const ringR = big ? 18*scale : 12*scale;
+ const ringW = (big ? 34 : 16) * scale;
+ const ring=el('circle',{cx:x,cy:y,r:ringR,fill:'none',stroke:color,'stroke-width':ringW,opacity:1});
+ fxLayer.append(ring);
+ effects.push({type:'ring',node:ring,x,y,r:ringR,life:0,big,scale});
+
+ const sparkN = count;
+ const baseSpeed = (big?260:150) * scale;
+ const baseR     = (big?10:6) * scale;
+ for(let i=0;i<sparkN;i++){
+   const a=Math.random()*Math.PI*2, s=baseSpeed*(0.4+Math.random());
+   const n=el('circle',{cx:x,cy:y,r:4+Math.random()*baseR,fill:i%3?color:'#fff0a1'});
+   fxLayer.append(n);
+   effects.push({type:'spark',node:n,x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-80,life:0});
+ }
 }
+
 function endCheck(){
  if(state!=='play'||bullet)return;
  if(enemies.every(e=>!e.alive)){setTimeout(()=>finish(true),500);return;}
@@ -154,13 +253,12 @@ function endCheck(){
 }
 function finish(win){
  if(state!=='play')return;state=win?'win':'lose';aimPath?.setAttribute('opacity','0');overlay.classList.add('show');
- resultIcon.textContent=win?'★':'↻';resultTitle.textContent=win?'Clean Shot!':'Next Level!';resultSub.textContent=win?`${enemies.length} bandit${enemies.length>1?'s':''} cleared.`:'Failed.';retry.textContent=win?'Next Level':'Next Level!';log(win?'level_complete':'level_failed',{level});
+ resultIcon.textContent=win?'★':'↻';resultTitle.textContent=win?'Clean Shot!':'Next Level!';resultSub.textContent=win?`${enemies.length} bandit${enemies.length>1?'s':''} cleared.`:'Failed.';retry.textContent=win?'Next Level!':'Next Level!';log(win?'level_complete':'level_failed',{level});
 }
 retry.addEventListener('click',()=>{unlockAudio();if(state==='lose')level--;newLevel();});
 
 function bulletHitRect(b,r){return b.x+b.r>r.x&&b.x-b.r<r.x+r.w&&b.y+b.r>r.y&&b.y-b.r<r.y+r.h;}
 function update(dt){
- // Falling towers use a fast, readable hinged rotation and a broad final crush zone.
  for(const t of towers){if(t.falling){t.angle+=150*dt;if(t.angle>=88){t.angle=88;t.falling=false;t.fallen=true;burst(t.x+t.dir*t.h*.55,GROUND-20,'#d6a35c',18);enemies.forEach(e=>{const lo=Math.min(t.x,t.x+t.dir*t.h),hi=Math.max(t.x,t.x+t.dir*t.h);if(e.alive&&e.x>lo-55&&e.x<hi+55)killEnemy(e,'crush')});}t.node.setAttribute('transform',`translate(${t.x} ${GROUND}) rotate(${t.angle*t.dir})`);}}
  if(bullet){
   bullet.life+=dt; const steps=3,sd=dt/steps;
@@ -169,7 +267,14 @@ function update(dt){
    if(b.x<28&&b.vx<0){b.x=28;b.vx*=-1;b.bounces++;bounceSound()}if(b.x>1892&&b.vx>0){b.x=1892;b.vx*=-1;b.bounces++;bounceSound()}
    if(b.y<145&&b.vy<0){b.y=145;b.vy*=-1;b.bounces++;bounceSound()}if(b.y>GROUND-14&&b.vy>0){b.y=GROUND-14;b.vy*=-1;b.bounces++;bounceSound()}
    for(const p of platforms){if(bullet&&bulletHitRect(b,p)){b.vy*=-1;b.y=b.vy<0?p.y-b.r:p.y+p.h+b.r;b.bounces++;bounceSound();}}
-   for(const ex of explosives){if(ex.alive&&Math.hypot(b.x-ex.x,b.y-ex.y)<b.r+ex.r){explode(ex);removeBullet();break;}}
+   for(const ex of explosives){
+     if(!ex.alive||ex.spent)continue;
+     if(Math.hypot(b.x-ex.x,b.y-ex.y)<b.r+ex.r){
+       if(ex.type==='tnt'){explode(ex);}
+       else{triggerBarrel(ex);}
+       removeBullet();break;
+     }
+   }
    if(!bullet)break;
    for(const e of enemies){if(e.alive&&Math.hypot(b.x-e.x,b.y-e.y)<b.r+e.r){killEnemy(e,'shot');removeBullet();break;}}
    if(!bullet)break;
@@ -181,7 +286,8 @@ function update(dt){
   if(bullet)bullet.node.setAttribute('transform',`translate(${bullet.x} ${bullet.y}) rotate(${bullet.life*900})`);
  }
  for(const e of enemies){if(!e.alive&&e.node.isConnected){e.dy+=650*dt;e.y+=e.dy*dt;e.node.setAttribute('transform',`translate(${e.x} ${e.y}) rotate(${e.spin*Math.min(1,(e.y-700)/300)})`);if(e.y>1100)e.node.remove();}}
- for(let i=effects.length-1;i>=0;i--){const e=effects[i];e.life+=dt;if(e.type==='spark'){e.vy+=460*dt;e.x+=e.vx*dt;e.y+=e.vy*dt;e.node.setAttribute('cx',e.x);e.node.setAttribute('cy',e.y);e.node.setAttribute('opacity',Math.max(0,1-e.life/1.1));}else{e.r+=dt*(e.big?300:180);e.node.setAttribute('r',e.r);e.node.setAttribute('opacity',Math.max(0,1-e.life/.65));}if(e.life>1.1){e.node.remove();effects.splice(i,1);}}
+
+ for(let i=effects.length-1;i>=0;i--){const e=effects[i];e.life+=dt;if(e.type==='spark'){e.vy+=460*dt;e.x+=e.vx*dt;e.y+=e.vy*dt;e.node.setAttribute('cx',e.x);e.node.setAttribute('cy',e.y);e.node.setAttribute('opacity',Math.max(0,1-e.life/1.1));}else{e.r+=dt*(e.big?420:180)*(e.scale||1);e.node.setAttribute('r',e.r);e.node.setAttribute('opacity',Math.max(0,1-e.life/.65));}if(e.life>1.1){e.node.remove();effects.splice(i,1);}}
 }
 function removeBullet(){if(!bullet)return;bullet.node.remove();bullet=null;updateAim();setTimeout(endCheck,100);}
 let last=performance.now();function loop(now){const dt=Math.min(.025,(now-last)/1000);last=now;if(state==='play')update(dt);requestAnimationFrame(loop)}
