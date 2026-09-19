@@ -33,14 +33,12 @@ function tryStartMusic(){
     audioStarted = true;
   }
 }
-// play on load once buffered
 if (audio.music.readyState >= 3) {
   tryStartMusic();
 } else {
   audio.music.addEventListener('canplaythrough', tryStartMusic, { once:true });
   audio.music.addEventListener('loadeddata', tryStartMusic, { once:true });
 }
-// retry on any gesture until it actually starts
 ['pointerdown','keydown','touchstart','click'].forEach(evt=>{
   window.addEventListener(evt, ()=>{
     if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
