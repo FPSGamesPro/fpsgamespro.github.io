@@ -154,7 +154,7 @@ function endCheck(){
 }
 function finish(win){
  if(state!=='play')return;state=win?'win':'lose';aimPath?.setAttribute('opacity','0');overlay.classList.add('show');
- resultIcon.textContent=win?'★':'↻';resultTitle.textContent=win?'Clean Shot!':'Try Again!';resultSub.textContent=win?`${enemies.length} bandit${enemies.length>1?'s':''} cleared. Nice shooting.`:'Out of rounds. Use the walls and chain reactions!';retry.textContent=win?'Next Level':'Try Again';log(win?'level_complete':'level_failed',{level});
+ resultIcon.textContent=win?'★':'↻';resultTitle.textContent=win?'Clean Shot!':'Next Level!';resultSub.textContent=win?`${enemies.length} bandit${enemies.length>1?'s':''} cleared.`:'Failed.';retry.textContent=win?'Next Level':'Next Level!';log(win?'level_complete':'level_failed',{level});
 }
 retry.addEventListener('click',()=>{unlockAudio();if(state==='lose')level--;newLevel();});
 
