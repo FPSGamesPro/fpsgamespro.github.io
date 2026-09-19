@@ -200,24 +200,22 @@ function explode(ex){
 }
 function triggerBarrel(ex){
  if(ex.spent) return;
+ ex.spent = true;
+ ex.alive = false;
  burst(ex.x,ex.y-20,'#ffc357',22,false,1.2);
  ping(260,.18,'triangle');
  let found = false;
- explosives.forEach(other=>{
-   if(other.alive&&other!==ex&&other.type==='tnt'&&Math.hypot(other.x-ex.x,other.y-ex.y)<CHAIN_RADIUS){
+ for(const other of explosives){
+   if(other===ex) continue;
+   if(!other.alive) continue;
+   if(other.type!=='tnt') continue;
+   if(Math.hypot(other.x-ex.x,other.y-ex.y) < CHAIN_RADIUS){
      found = true;
      setTimeout(()=>explode(other),120);
    }
- });
- if(found){
-   hint.textContent='BARREL RUPTURED!';
-   ex.spent = true;
-   ex.node.style.opacity = '.55';
- } else {
-   hint.textContent='BARREL BURST!';
-   ex.alive = false;
-   ex.node.remove();
  }
+ hint.textContent = found ? 'BARREL RUPTURED!' : 'BARREL BURST!';
+ ex.node.remove();
 }
 function fallTower(t,dir){if(t.falling||t.fallen)return;t.falling=true;t.dir=dir>=0?1:-1;hint.textContent='TIMBER!';ping(145,.22,'sawtooth');}
 function burst(x,y,color,count,big=false,scale=1){
@@ -243,7 +241,7 @@ function endCheck(){
 }
 function finish(win){
  if(state!=='play')return;state=win?'win':'lose';aimPath?.setAttribute('opacity','0');overlay.classList.add('show');
- resultIcon.textContent=win?'★':'↻';resultTitle.textContent=win?'Clean Shot!':'Next Level!';resultSub.textContent=win?`${enemies.length} bandit${enemies.length>1?'s':''} cleared.`:'Failed.';retry.textContent=win?'Failed':'Next Level!';log(win?'level_complete':'level_failed',{level});
+ resultIcon.textContent=win?'★':'↻';resultTitle.textContent=win?'Clean Shot!':'Failed';resultSub.textContent=win?`${enemies.length} bandit${enemies.length>1?'s':''} cleared.`:'Failed.';retry.textContent=win?'Next Level!':'Next Level!';log(win?'level_complete':'level_failed',{level});
 }
 retry.addEventListener('click',()=>{unlockAudio();if(state==='lose')level--;newLevel();});
 
