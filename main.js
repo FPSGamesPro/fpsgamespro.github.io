@@ -132,7 +132,6 @@ function newLevel(){
 
 function svgPoint(e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const q=p.matrixTransform(svg.getScreenCTM().inverse());return{x:q.x,y:q.y};}
 
-/* INPUT: mouse / touch only. Fire on RELEASE (pointerup). No keyboard. */
 svg.addEventListener('pointermove',e=>{ mouse=svgPoint(e); updateAim(); });
 svg.addEventListener('pointerdown',e=>{
   if(e.button!==0) return;
@@ -203,13 +202,22 @@ function triggerBarrel(ex){
  if(ex.spent) return;
  burst(ex.x,ex.y-20,'#ffc357',22,false,1.2);
  ping(260,.18,'triangle');
- hint.textContent='BARREL RUPTURED!';
+ let found = false;
  explosives.forEach(other=>{
-   if(other.alive&&other!==ex&&other.type==='tnt'&&Math.hypot(other.x-ex.x,other.y-ex.y)<CHAIN_RADIUS)
+   if(other.alive&&other!==ex&&other.type==='tnt'&&Math.hypot(other.x-ex.x,other.y-ex.y)<CHAIN_RADIUS){
+     found = true;
      setTimeout(()=>explode(other),120);
+   }
  });
- ex.spent = true;
- ex.node.style.opacity = '.55';
+ if(found){
+   hint.textContent='BARREL RUPTURED!';
+   ex.spent = true;
+   ex.node.style.opacity = '.55';
+ } else {
+   hint.textContent='BARREL BURST!';
+   ex.alive = false;
+   ex.node.remove();
+ }
 }
 function fallTower(t,dir){if(t.falling||t.fallen)return;t.falling=true;t.dir=dir>=0?1:-1;hint.textContent='TIMBER!';ping(145,.22,'sawtooth');}
 function burst(x,y,color,count,big=false,scale=1){
